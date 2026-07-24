@@ -1,0 +1,13 @@
+[package]
+name = "deadbeef-gpu"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[dependencies]
+deadbeef-core = { version = "0.1.0", path = "../core" }
+wgpu = "30"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+rand = { version = "0.9", features = ["small_rng"] }

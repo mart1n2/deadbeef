@@ -3,6 +3,16 @@ members = [
   "bench",
   "cli",
   "core",
+  "gpu",
+  "wasm",
+]
+# `gpu` is excluded from the default set so bare `cargo build`/`test`/`clippy`
+# (and CI) stay CPU-only and don't compile the heavy `wgpu` dependency. Build it
+# on demand with `cargo build -p deadbeef --features gpu`.
+default-members = [
+  "bench",
+  "cli",
+  "core",
   "wasm",
 ]
 resolver = "2"

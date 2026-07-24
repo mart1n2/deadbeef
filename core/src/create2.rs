@@ -31,6 +31,16 @@ impl Create2 {
         unsafe { &mut *self.0.get_unchecked_mut(53..85).as_mut_ptr().cast() }
     }
 
+    /// Returns the factory address.
+    pub fn factory(&self) -> Address {
+        Address(unsafe { *self.0.get_unchecked(1..21).as_ptr().cast() })
+    }
+
+    /// Returns the init code hash.
+    pub fn init_code_hash(&self) -> [u8; 32] {
+        unsafe { *self.0.get_unchecked(53..85).as_ptr().cast() }
+    }
+
     /// Returns the deterministic address for the `CREATE2` parameters.
     pub fn creation_address(&self) -> Address {
         let digest = keccak::v256(&self.0);

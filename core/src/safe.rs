@@ -63,6 +63,26 @@ impl Safe {
         &self.initializer
     }
 
+    /// Returns the constant 32-byte prefix of the `CREATE2` salt preimage.
+    ///
+    /// This is `keccak256(initializer)` and is fixed for a given Safe; the salt
+    /// nonce is appended to it before hashing to derive the `CREATE2` salt. It
+    /// is exposed to allow external search implementations (e.g. on a GPU) to
+    /// reconstruct the salt preimage.
+    pub fn salt_prefix(&self) -> [u8; 32] {
+        self.salt[0..32].try_into().unwrap()
+    }
+
+    /// Returns the `SafeProxyFactory` address used for `CREATE2`.
+    pub fn factory(&self) -> Address {
+        self.create2.factory()
+    }
+
+    /// Returns the `SafeProxy` init code hash used for `CREATE2`.
+    pub fn init_code_hash(&self) -> [u8; 32] {
+        self.create2.init_code_hash()
+    }
+
     /// Updates the salt nonce and recomputes the `CREATE2` salt.
     pub fn update_salt_nonce(&mut self, f: impl FnOnce(&mut [u8; 32])) {
         let salt_nonce = unsafe { &mut *self.salt.get_unchecked_mut(32..).as_mut_ptr().cast() };

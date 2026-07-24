@@ -4,8 +4,17 @@ Tool used for computing vanity Safe addresses.
 
 This tool only officially supports the latest Safe deployment [`v1.4.1`](https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.4.1).
 
-Since this version of the Safe proxy factory uses `CREATE2` op-code, we can change the final address by fiddling with the user-specified `saltNonce` parameter.
-It works by randomly trying out different values for the `saltNonce` parameter until it find ones that creates an address matching the desired prefix.
+Since this version of the Safe proxy factory uses the `CREATE2` op-code, we can change the final address by fiddling with the user-specified `saltNonce` parameter.
+It works by trying out different values for the `saltNonce` parameter until it finds one that creates an address matching what you want.
+
+Features:
+
+- **Prefix search** — find an address starting with a given hex string (`--prefix 0x5afe`).
+- **Leading-character search** — find an address with as many leading occurrences of a
+  single hex character as possible (`--leading 0`), e.g. for gas-optimized leading-zero
+  addresses.
+- **Multi-threaded CPU** search by default, or optional **GPU acceleration** (`--gpu`) that
+  runs on Apple M-series, NVIDIA and AMD GPUs from a single codebase.
 
 ## Building
 
@@ -14,6 +23,36 @@ For longer prefixes, this can take a **very** long time, so be sure to build wit
 ```sh
 cargo build --release
 ```
+
+### GPU acceleration
+
+The search can optionally run on a GPU, which is dramatically faster than the CPU for longer
+prefixes. It is built on [`wgpu`](https://github.com/gfx-rs/wgpu), so a single WGSL compute
+shader runs across backends:
+
+| Platform | Backend |
+| --- | --- |
+| Apple M-series | Metal |
+| NVIDIA / AMD / Intel (Linux) | Vulkan |
+| Windows | DirectX 12 |
+
+GPU support is behind an opt-in feature flag, so the default build stays lean and free of the
+`wgpu` dependency:
+
+```sh
+cargo build --release --features gpu
+```
+
+Then pass `--gpu` to run the search on the GPU (see [Usage](#usage) below). A live progress
+line (hash rate, attempts, elapsed, ETA) is printed to stderr while it runs:
+
+```
+searching on GPU: Apple M1 (67.1M nonces/dispatch, ~16.8M expected)
+34.2M hash/s | tried 1.0G | 29s | ETA ~1s
+```
+
+Every match found on the GPU is re-verified on the CPU before being reported, so a shader bug
+can never produce a wrong address.
 
 ## Usage
 
@@ -72,6 +111,24 @@ By default, the generated initializer will use the `SafeToL2Setup` contract. Thi
 ```sh
 deadbeef ... --safe-to-l2-setup 0x0000000000000000000000000000000000000000 ...
 ```
+
+When built with the `gpu` feature (see [GPU acceleration](#gpu-acceleration)), the search can be run on a GPU:
+
+```sh
+deadbeef ... --gpu ...
+```
+
+### Maximizing leading characters
+
+Instead of a fixed `--prefix`, you can search for an address with **as many leading occurrences of a single hex character as possible** (similar to [profanity2's `--leading`](https://github.com/1inch/profanity2#prefix---leading)). This is ideal for e.g. leading-zero (gas-optimized) addresses:
+
+```sh
+deadbeef --owner 0x1111111111111111111111111111111111111111 --leading 0
+```
+
+Unlike `--prefix`, this runs continuously and prints a new result **every time it beats the previous record** (e.g. 6, then 7, then 8 leading zeros...). Each printed result is a complete, ready-to-use deployment, so just keep the last (best) one and stop the search with `Ctrl-C` whenever you are satisfied. Combine with `--gpu` to find records much faster.
+
+The argument is a single hex digit; a repeated digit like `0x0000` is accepted and treated the same as `0` (`--prefix` is the tool for mixed patterns). `--leading` and `--prefix` are mutually exclusive.
 
 ## Creating the Safe
 

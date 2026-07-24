@@ -8,5 +8,10 @@ license = "GPL-3.0-or-later"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 deadbeef-core = { version = "0.1.0", path = "../core" }
+deadbeef-gpu = { version = "0.1.0", path = "../gpu", optional = true }
 hex = "0.4"
 num_cpus = "1"
+
+[features]
+# Enables GPU-accelerated search via the `--gpu` flag (pulls in `wgpu`).
+gpu = ["dep:deadbeef-gpu"]
