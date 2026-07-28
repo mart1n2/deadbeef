@@ -53,6 +53,30 @@ Deno.test("computes Safe creation with required configuration", async () => {
   );
 });
 
+Deno.test("computes Safe creation with prefix and suffix", async () => {
+  const prefix = "0xd";
+  const suffix = "eef";
+
+  const worker = new DeadbeefWorker(config, prefix, suffix);
+  const { creationAddress } = await worker.wait();
+  const address = creationAddress.toLowerCase();
+
+  assert(address.startsWith(prefix), "Safe address does not start with prefix");
+  assert(address.endsWith(suffix), "Safe address does not end with suffix");
+});
+
+Deno.test("computes Safe creation with suffix only", async () => {
+  const suffix = "f";
+
+  const worker = new DeadbeefWorker(config, undefined, suffix);
+  const { creationAddress } = await worker.wait();
+
+  assert(
+    creationAddress.toLowerCase().endsWith(suffix),
+    "Safe address does not end with suffix",
+  );
+});
+
 Deno.test("cancel resolves to error", async () => {
   const longPrefix = "0x00112233445566778899aabbccddeeff";
   const worker = new DeadbeefWorker(config, longPrefix);

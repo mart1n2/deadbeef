@@ -3,11 +3,13 @@ mod address;
 pub mod config;
 mod create2;
 mod keccak;
+mod pattern;
 mod safe;
 
 pub use self::{
     address::{Address, NonZeroAddress},
-    config::Configuration,
+    config::{Configuration, ConfigurationError},
+    pattern::{AddressPattern, PatternError},
     safe::{Safe, Transaction},
 };
 pub use hex_literal::hex;
@@ -16,8 +18,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Search for a vanity address with the specified Safe parameters and prefix.
 pub fn search(safe: &mut Safe, prefix: &[u8]) {
-    let mut rng = SmallRng::from_os_rng();
-    while !search_iter(safe, prefix, |n| rng.fill(n)) {}
+    let pattern = AddressPattern::from_prefix_bytes(prefix).expect("invalid vanity address prefix");
+    search_pattern(safe, &pattern);
+}
+
+/// Search for a vanity address satisfying the precompiled address `pattern`.
+pub fn search_pattern(safe: &mut Safe, pattern: &AddressPattern) {
+    let mut nonces = NonceSequence::new();
+    while !search_iter_pattern(safe, pattern, |nonce| nonces.write_next(nonce)) {}
 }
 
 /// Run a single iteration of the vanity address search.
@@ -25,8 +33,20 @@ pub fn search(safe: &mut Safe, prefix: &[u8]) {
 /// This function is publically exposed to facilitate benchmarking.
 #[doc(hidden)]
 pub fn search_iter(safe: &mut Safe, prefix: &[u8], update: impl FnOnce(&mut [u8; 32])) -> bool {
+    assert!(!prefix.is_empty() && prefix.len() <= 20, "invalid prefix");
     safe.update_salt_nonce(update);
     safe.creation_address().0.starts_with(prefix)
+}
+
+/// Run one search iteration against a precompiled address pattern.
+#[doc(hidden)]
+pub fn search_iter_pattern(
+    safe: &mut Safe,
+    pattern: &AddressPattern,
+    update: impl FnOnce(&mut [u8; 32]),
+) -> bool {
+    safe.update_salt_nonce(update);
+    pattern.matches(safe.creation_address())
 }
 
 /// Counts the number of leading nibbles (hex digits) of `address` equal to
@@ -59,9 +79,10 @@ pub fn search_leading(
     best: &AtomicU32,
     mut improved: impl FnMut(u32, &Safe),
 ) {
-    let mut rng = SmallRng::from_os_rng();
+    assert!(nibble <= 0xf, "leading nibble must be in 0..=15");
+    let mut nonces = NonceSequence::new();
     loop {
-        safe.update_salt_nonce(|n| rng.fill(n));
+        safe.update_salt_nonce(|nonce| nonces.write_next(nonce));
         let count = leading_count(safe.creation_address(), nibble);
 
         // Only report (and only once) if we are the thread that raised the
@@ -76,6 +97,32 @@ pub fn search_leading(
                 Err(actual) => current = actual,
             }
         }
+    }
+}
+
+/// A random 192-bit search domain plus a sequential 64-bit counter.
+///
+/// Keccak makes sequential nonces just as suitable for vanity search as fully
+/// random nonces, while incrementing a counter avoids generating 32 random
+/// bytes for every candidate.
+struct NonceSequence {
+    nonce: [u8; 32],
+    counter: u64,
+}
+
+impl NonceSequence {
+    fn new() -> Self {
+        let mut nonce = [0; 32];
+        SmallRng::from_os_rng().fill(&mut nonce);
+        let counter = u64::from_le_bytes(nonce[..8].try_into().unwrap());
+        Self { nonce, counter }
+    }
+
+    #[inline]
+    fn write_next(&mut self, destination: &mut [u8; 32]) {
+        self.nonce[..8].copy_from_slice(&self.counter.to_le_bytes());
+        self.counter = self.counter.wrapping_add(1);
+        destination.copy_from_slice(&self.nonce);
     }
 }
 

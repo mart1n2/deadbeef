@@ -1,4 +1,4 @@
-use deadbeef_core::{config, Configuration, Safe};
+use deadbeef_core::{config, AddressPattern, Configuration, Safe};
 use hex::FromHexError;
 use std::error::Error;
 use wasm_bindgen::prelude::*;
@@ -69,8 +69,12 @@ mod js {
 }
 
 #[wasm_bindgen]
-pub fn search(safe: JsValue, prefix: &str) -> Result<JsValue, String> {
-    let result = inner(safe, prefix);
+pub fn search(
+    safe: JsValue,
+    prefix: Option<String>,
+    suffix: Option<String>,
+) -> Result<JsValue, String> {
+    let result = inner(safe, prefix.as_deref(), suffix.as_deref());
 
     // TODO(nlordell): Ideally, we would just return `Result<JsValue, JsError>`
     // and be done with it. However, it looks like `wasm-pack`/`wasm-bindgen` is
@@ -79,11 +83,15 @@ pub fn search(safe: JsValue, prefix: &str) -> Result<JsValue, String> {
     result.map_err(|err| err.to_string())
 }
 
-fn inner(safe: JsValue, prefix: &str) -> Result<JsValue, Box<dyn Error>> {
+fn inner(
+    safe: JsValue,
+    prefix: Option<&str>,
+    suffix: Option<&str>,
+) -> Result<JsValue, Box<dyn Error>> {
     let config = serde_wasm_bindgen::from_value::<js::Configuration>(safe)?;
-    let prefix = hex_decode(prefix)?;
+    let pattern = AddressPattern::from_affixes(prefix, suffix)?;
 
-    let mut safe = Safe::new(Configuration {
+    let mut safe = Safe::try_new(Configuration {
         proxy: config::Proxy {
             factory: config.proxy_factory.parse()?,
             init_code: hex_decode(&config.proxy_init_code)?,
@@ -114,9 +122,9 @@ fn inner(safe: JsValue, prefix: &str) -> Result<JsValue, Box<dyn Error>> {
                 .transpose()?,
             identifier: None,
         },
-    });
+    })?;
 
-    deadbeef_core::search(&mut safe, &prefix);
+    deadbeef_core::search_pattern(&mut safe, &pattern);
 
     let transaction = safe.transaction();
     let creation = serde_wasm_bindgen::to_value(&js::Creation {

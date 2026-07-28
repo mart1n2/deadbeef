@@ -9,7 +9,9 @@ It works by trying out different values for the `saltNonce` parameter until it f
 
 Features:
 
-- **Prefix search** — find an address starting with a given hex string (`--prefix 0x5afe`).
+- **Prefix and suffix search** — find an address matching either or both
+  hexadecimal affixes (`--prefix 0x5afe --suffix beef`). Odd-length patterns
+  are supported.
 - **Leading-character search** — find an address with as many leading occurrences of a
   single hex character as possible (`--leading 0`), e.g. for gas-optimized leading-zero
   addresses.
@@ -18,7 +20,7 @@ Features:
 
 ## Building
 
-For longer prefixes, this can take a **very** long time, so be sure to build with release:
+For longer patterns, this can take a **very** long time, so be sure to build with release:
 
 ```sh
 cargo build --release
@@ -27,7 +29,7 @@ cargo build --release
 ### GPU acceleration
 
 The search can optionally run on a GPU, which is dramatically faster than the CPU for longer
-prefixes. It is built on [`wgpu`](https://github.com/gfx-rs/wgpu), so a single WGSL compute
+patterns. It is built on [`wgpu`](https://github.com/gfx-rs/wgpu), so a single WGSL compute
 shader runs across backends:
 
 | Platform | Backend |
@@ -60,7 +62,7 @@ can never produce a wrong address.
 deadbeef --help
 ```
 
-For example, to generate calldata for creating a Safe with initial owners of `0x1111111111111111111111111111111111111111` and `0x2222222222222222222222222222222222222222` and prefix `0xdeadbeef`:
+For example, to generate calldata for creating a Safe with initial owners of `0x1111111111111111111111111111111111111111` and `0x2222222222222222222222222222222222222222` and prefix `0x5afe`:
 
 ```sh
 deadbeef \
@@ -68,6 +70,12 @@ deadbeef \
   --owner 0x2222222222222222222222222222222222222222 \
   --prefix 0x5afe
 ```
+
+`--prefix` and `--suffix` may also be used independently. They match
+hexadecimal digits rather than whole bytes, so odd-length values such as
+`--prefix 0 --suffix fff` are valid. A prefix and suffix may overlap when their
+overlapping digits agree; conflicting or longer-than-address patterns are
+rejected before the search starts.
 
 This will output some result like:
 
@@ -86,6 +94,12 @@ data:        0xfe51f64300000000000000000000000029fcb43b46531bca003ddc8fcb67ffe91
 fallback:    0xfd0732Dc9E303f09fCEf3a7388Ad10A83459Ec99
 ---
 calldata:    0x1688f0b900000000000000000000000041675c099f32341bf84bfc5382af534df5c7461a0000000000000000000000000000000000000000000000000000000000000060dc50d6fbe25fc5fe0cffb1a2fc5170b76ac620f74f22c7b247d8c73d8307230200000000000000000000000000000000000000000000000000000000000001c4b63e800d00000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000bd89a1ce4dde368ffab0ec35506eece0b1ffdc540000000000000000000000000000000000000000000000000000000000000160000000000000000000000000fd0732dc9e303f09fcef3a7388ad10a83459ec990000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002000000000000000000000000111111111111111111111111111111111111111100000000000000000000000022222222222222222222222222222222222222220000000000000000000000000000000000000000000000000000000000000024fe51f64300000000000000000000000029fcb43b46531bca003ddc8fcb67ffe91900c7620000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+```
+
+To require both affixes:
+
+```sh
+deadbeef ... --prefix dead --suffix beef
 ```
 
 Note that the owner signature threshold defaults to 1 but can optionally be specified with:
@@ -120,7 +134,7 @@ deadbeef ... --gpu ...
 
 ### Maximizing leading characters
 
-Instead of a fixed `--prefix`, you can search for an address with **as many leading occurrences of a single hex character as possible** (similar to [profanity2's `--leading`](https://github.com/1inch/profanity2#prefix---leading)). This is ideal for e.g. leading-zero (gas-optimized) addresses:
+Instead of fixed affixes, you can search for an address with **as many leading occurrences of a single hex character as possible** (similar to [profanity2's `--leading`](https://github.com/1inch/profanity2#prefix---leading)). This is ideal for e.g. leading-zero (gas-optimized) addresses:
 
 ```sh
 deadbeef --owner 0x1111111111111111111111111111111111111111 --leading 0
@@ -128,7 +142,7 @@ deadbeef --owner 0x1111111111111111111111111111111111111111 --leading 0
 
 Unlike `--prefix`, this runs continuously and prints a new result **every time it beats the previous record** (e.g. 6, then 7, then 8 leading zeros...). Each printed result is a complete, ready-to-use deployment, so just keep the last (best) one and stop the search with `Ctrl-C` whenever you are satisfied. Combine with `--gpu` to find records much faster.
 
-The argument is a single hex digit; a repeated digit like `0x0000` is accepted and treated the same as `0` (`--prefix` is the tool for mixed patterns). `--leading` and `--prefix` are mutually exclusive.
+The argument is a single hex digit; a repeated digit like `0x0000` is accepted and treated the same as `0` (`--prefix` is the tool for mixed patterns). `--leading` is mutually exclusive with both `--prefix` and `--suffix`.
 
 ## Creating the Safe
 

@@ -17,6 +17,10 @@
             <label for="prefix">Prefix:</label>
             <input type="text" id="prefix" size="44" value="0xddbf">
           </div>
+          <div>
+            <label for="suffix">Suffix:</label>
+            <input type="text" id="suffix" size="44" value="">
+          </div>
 
           <button type="button" id="search">Search</button>
           <button type="button" id="cancel">Cancel</button>
@@ -62,6 +66,7 @@
               threshold: 1,
             },
             document.querySelector("#prefix").value,
+            document.querySelector("#suffix").value || undefined,
           ));
 
         Promise.race(workers.map((worker) => worker.wait()))

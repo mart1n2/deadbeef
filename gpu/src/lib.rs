@@ -10,7 +10,7 @@
 //! it on the CPU (guarding against any shader bug), and reports it.
 
 use bytemuck::Zeroable as _;
-use deadbeef_core::Safe;
+use deadbeef_core::{AddressPattern, Safe};
 use rand::{rngs::SmallRng, Rng as _, SeedableRng as _};
 use std::{
     error::Error,
@@ -39,8 +39,8 @@ const DEFAULT_GROUPS: u32 = 1 << 12;
 struct Params {
     salt_prefix: [u32; 8],
     hash2_base: [u32; 34],
-    prefix: [u32; 5],
-    prefix_len: u32,
+    pattern_value: [u32; 5],
+    pattern_mask: [u32; 5],
     mode: u32,
     leading_nibble: u32,
     threshold: u32,
@@ -212,8 +212,22 @@ impl Gpu {
     /// shader bug can never produce a wrong result — at worst the search would
     /// keep running.
     pub fn search(&self, safe: &mut Safe, prefix: &[u8], mut progress: impl FnMut(Progress)) {
-        let prefix = &prefix[..prefix.len().min(20)];
-        let mut params = build_params(safe, prefix);
+        let pattern =
+            AddressPattern::from_prefix_bytes(prefix).expect("invalid vanity address prefix");
+        self.search_pattern(safe, &pattern, &mut progress);
+    }
+
+    /// Searches for a `saltNonce` whose Safe address satisfies `pattern`.
+    ///
+    /// The precompiled value/mask representation keeps the GPU hot path fixed
+    /// width even when both nibble-level prefixes and suffixes are present.
+    pub fn search_pattern(
+        &self,
+        safe: &mut Safe,
+        pattern: &AddressPattern,
+        mut progress: impl FnMut(Progress),
+    ) {
+        let mut params = build_params_pattern(safe, pattern);
         let batch = self.batch_size();
 
         let mut rng = SmallRng::from_os_rng();
@@ -238,7 +252,7 @@ impl Gpu {
             if result.found != 0 {
                 let nonce: [u8; 32] = bytemuck::cast(result.nonce);
                 safe.update_salt_nonce(|n| n.copy_from_slice(&nonce));
-                if safe.matches(prefix) {
+                if safe.matches_pattern(pattern) {
                     return;
                 }
                 // A reported match that fails CPU verification would indicate a
@@ -384,8 +398,8 @@ fn build_base_params(safe: &Safe) -> Params {
     Params {
         salt_prefix,
         hash2_base,
-        prefix: [0_u32; 5],
-        prefix_len: 0,
+        pattern_value: [0_u32; 5],
+        pattern_mask: [0_u32; 5],
         mode: MODE_PREFIX,
         leading_nibble: 0,
         threshold: 0,
@@ -393,15 +407,11 @@ fn build_base_params(safe: &Safe) -> Params {
     }
 }
 
-/// Builds shader inputs for a prefix search.
-fn build_params(safe: &Safe, prefix: &[u8]) -> Params {
-    let n = prefix.len().min(20);
-    let mut prefix_bytes = [0_u8; 20];
-    prefix_bytes[..n].copy_from_slice(&prefix[..n]);
-
+/// Builds shader inputs for a precompiled address pattern.
+fn build_params_pattern(safe: &Safe, pattern: &AddressPattern) -> Params {
     Params {
-        prefix: bytemuck::cast(prefix_bytes),
-        prefix_len: n as u32,
+        pattern_value: bytemuck::cast(pattern.value()),
+        pattern_mask: bytemuck::cast(pattern.mask()),
         mode: MODE_PREFIX,
         ..build_base_params(safe)
     }
@@ -459,7 +469,11 @@ mod tests {
         cpu.update_salt_nonce(|n| n.copy_from_slice(&expected_nonce));
         let address = cpu.creation_address();
 
-        let mut params = build_params(&safe, &address.0);
+        let address_hex = address.to_string();
+        let pattern =
+            AddressPattern::from_affixes(Some(&address_hex[2..22]), Some(&address_hex[22..]))
+                .unwrap();
+        let mut params = build_params_pattern(&safe, &pattern);
         params.nonce_base = bytemuck::cast(nonce_base);
         let result = gpu.dispatch(&params);
 

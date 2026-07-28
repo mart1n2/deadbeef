@@ -34,10 +34,10 @@ export interface Transaction {
 
 /**
  * A worker for searching for a vanity Safe address for the specified
- * parameters and prefix.
+ * parameters and optional hexadecimal prefix/suffix constraints.
  */
 export declare class DeadbeefWorker {
-  constructor(config: Configuration, prefix: Bytes);
+  constructor(config: Configuration, prefix?: string, suffix?: string);
   wait(): Promise<Creation>;
   cancel(err?: Error): void;
 }

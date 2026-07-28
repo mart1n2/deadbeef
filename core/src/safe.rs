@@ -1,6 +1,8 @@
 //! Module containing Safe
 
-use crate::{address::Address, create2::Create2, keccak, Configuration};
+use crate::{
+    address::Address, create2::Create2, keccak, AddressPattern, Configuration, ConfigurationError,
+};
 
 /// Safe deployment for computing deterministic addresses.
 #[derive(Clone)]
@@ -23,6 +25,12 @@ pub struct Transaction {
 impl Safe {
     /// Creates a new safe from spcified configuration.
     pub fn new(config: Configuration) -> Self {
+        Self::try_new(config).expect("invalid Safe configuration")
+    }
+
+    /// Creates a new Safe after validating its account configuration.
+    pub fn try_new(config: Configuration) -> Result<Self, ConfigurationError> {
+        config.validate()?;
         let initializer = config.account.initializer();
 
         let mut salt = [0_u8; 64];
@@ -35,12 +43,12 @@ impl Safe {
         );
         *create2.salt_mut() = keccak::v256(&salt);
 
-        Self {
+        Ok(Self {
             config,
             initializer,
             salt,
             create2,
-        }
+        })
     }
 
     /// Returns the creation address for the Safe.
@@ -51,6 +59,11 @@ impl Safe {
     /// Returns whether the Safe's address starts with the specified prefix.
     pub fn matches(&self, prefix: &[u8]) -> bool {
         self.creation_address().0.starts_with(prefix)
+    }
+
+    /// Returns whether the Safe's address satisfies `pattern`.
+    pub fn matches_pattern(&self, pattern: &AddressPattern) -> bool {
+        pattern.matches(self.creation_address())
     }
 
     /// Returns the current salt nonce value for the Safe deployment.

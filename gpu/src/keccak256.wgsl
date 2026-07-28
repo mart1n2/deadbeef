@@ -8,8 +8,8 @@
 //   2. address      = keccak256(0xff ++ factory[20] ++ create2_salt[32]
 //                                    ++ init_code_hash[32])[12..32]
 //
-// then checks whether `address` starts with the requested prefix and, on a
-// match, records the winning nonce.
+// then checks whether `address` satisfies the compiled prefix/suffix pattern
+// and, on a match, records the winning nonce.
 //
 // WGSL has no 64-bit integer type, so each of the 25 Keccak lanes is stored as
 // a `vec2<u32>` = (low 32 bits, high 32 bits). Messages are assembled at the
@@ -23,11 +23,10 @@ struct Params {
     // padded). The 32 bytes where create2_salt goes (byte offset 21..53) are
     // left zero and OR-injected per invocation below.
     hash2_base: array<u32, 34>,
-    // Target address prefix, packed little-endian aligned to address byte 0.
-    prefix: array<u32, 5>,
-    // Number of prefix bytes to match (1..=20).
-    prefix_len: u32,
-    // Search mode: 0 = prefix match, 1 = maximise leading nibbles.
+    // Precompiled target address and per-nibble mask, packed little-endian.
+    pattern_value: array<u32, 5>,
+    pattern_mask: array<u32, 5>,
+    // Search mode: 0 = address pattern, 1 = maximise leading nibbles.
     mode: u32,
     // Leading mode: the target nibble (0..=15) to count.
     leading_nibble: u32,
@@ -239,10 +238,6 @@ fn count_leading(digest: array<u32, 8>, t: u32) -> u32 {
 
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let nfull = params.prefix_len / 4u;
-    let rem = params.prefix_len % 4u;
-    let mask = select(0u, (1u << (8u * rem)) - 1u, rem > 0u);
-
     // Assemble the constant part of the hash-1 rate block once. The candidate
     // nonce occupies words 8..16: word 8 = global id (distinct per invocation),
     // word 9 = the per-iteration counter, words 10..16 = the random seed.
@@ -282,15 +277,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         var matches = false;
         var report_count = 0u;
         if (params.mode == MODE_PREFIX) {
-            matches = true;
-            for (var k = 0u; k < nfull; k = k + 1u) {
-                if (digest[3u + k] != params.prefix[k]) {
-                    matches = false;
-                }
+            // Fixed-width value/mask comparison supports prefix, suffix and
+            // nibble-level overlap without data-dependent indexing.
+            var difference = 0u;
+            for (var k = 0u; k < 5u; k = k + 1u) {
+                difference = difference |
+                    ((digest[3u + k] ^ params.pattern_value[k]) & params.pattern_mask[k]);
             }
-            if (rem > 0u && (digest[3u + nfull] & mask) != (params.prefix[nfull] & mask)) {
-                matches = false;
-            }
+            matches = difference == 0u;
         } else {
             report_count = count_leading(digest, params.leading_nibble);
             matches = report_count >= params.threshold;

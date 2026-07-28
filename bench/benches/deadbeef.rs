@@ -50,3 +50,15 @@ fn check(bencher: divan::Bencher) {
         });
     });
 }
+
+#[divan::bench]
+fn check_prefix_and_suffix(bencher: divan::Bencher) {
+    let mut safe = safe();
+    let pattern = deadbeef_core::AddressPattern::from_affixes(Some("dead"), Some("beef")).unwrap();
+
+    bencher.bench_local(move || {
+        deadbeef_core::search_iter_pattern(&mut safe, &divan::black_box(pattern), |nonce| {
+            nonce.copy_from_slice(&divan::black_box([0xee; 32]))
+        });
+    });
+}

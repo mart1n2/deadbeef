@@ -2,7 +2,7 @@ export class DeadbeefWorker {
   #promise;
   #terminate;
 
-  constructor(safe, prefix) {
+  constructor(safe, prefix, suffix) {
     const worker = new Worker(
       new URL("./worker.js", import.meta.url),
       { type: "module" },
@@ -26,7 +26,7 @@ export class DeadbeefWorker {
       });
     });
 
-    worker.postMessage({ safe, prefix });
+    worker.postMessage({ safe, prefix, suffix });
   }
 
   wait() {

@@ -33,3 +33,18 @@ To check it out, navigate to [`http://localhost:8000/example`](http://localhost:
 ```sh
 make host
 ```
+
+The worker accepts optional prefix and suffix constraints; at least one must be
+non-empty. Both are hexadecimal digit patterns, so odd-length values are
+supported:
+
+```ts
+const worker = new DeadbeefWorker(config, "0xabc", "def");
+const creation = await worker.wait();
+```
+
+For a suffix-only search, omit the second argument:
+
+```ts
+const worker = new DeadbeefWorker(config, undefined, "beef");
+```

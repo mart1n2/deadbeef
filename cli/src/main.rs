@@ -3,7 +3,9 @@ mod deployment;
 
 use self::chain::{Chain, Details, Explorer, Singleton};
 use clap::Parser;
-use deadbeef_core::{config, Address, Configuration, NonZeroAddress, Safe};
+use deadbeef_core::{
+    config, Address, AddressPattern, Configuration, NonZeroAddress, PatternError, Safe,
+};
 use hex::FromHexError;
 use std::{
     num::NonZeroUsize,
@@ -31,18 +33,24 @@ struct Args {
     #[arg(short, long, default_value_t = 1)]
     threshold: usize,
 
-    /// The prefix to look for.
+    /// The hexadecimal address prefix to look for.
     ///
-    /// Mutually exclusive with '--leading'; exactly one must be specified.
-    #[arg(short, long)]
-    prefix: Option<Hex>,
+    /// May be combined with '--suffix'. Odd-length values are supported.
+    #[arg(short, long, conflicts_with = "leading")]
+    prefix: Option<Affix>,
+
+    /// The hexadecimal address suffix to look for.
+    ///
+    /// May be combined with '--prefix'. Odd-length values are supported.
+    #[arg(short, long, conflicts_with = "leading")]
+    suffix: Option<Affix>,
 
     /// Search for the maximum number of leading nibbles equal to the given hex
     /// character (e.g. '--leading 0' for as many leading zeros as possible).
     ///
-    /// Unlike '--prefix', this runs continuously, printing each address that
-    /// beats the previous record until interrupted (Ctrl-C).
-    #[arg(short = 'L', long, conflicts_with = "prefix")]
+    /// Unlike fixed affixes, this runs continuously, printing each address
+    /// that beats the previous record until interrupted (Ctrl-C).
+    #[arg(short = 'L', long, conflicts_with_all = ["prefix", "suffix"])]
     leading: Option<Nibble>,
 
     /// The chain ID to find a vanity Safe address for. If the chain is not
@@ -124,6 +132,26 @@ impl FromStr for Hex {
     }
 }
 
+/// A hexadecimal address prefix or suffix.
+#[derive(Clone)]
+struct Affix(String);
+
+impl Affix {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for Affix {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        AddressPattern::from_affixes(Some(value), None)
+            .map(|_| Self(value.to_string()))
+            .map_err(|err| err.to_string())
+    }
+}
+
 /// A single hexadecimal digit (nibble), used for the leading-character search.
 ///
 /// Accepts one hex digit (`0`, `a`) or several *identical* ones (`aaaa`,
@@ -163,6 +191,10 @@ fn main() {
     let args = Args::parse();
 
     let threads = NonZeroUsize::new(args.threads);
+    let pattern = compile_pattern(&args).unwrap_or_else(|err| {
+        eprintln!("error: {err}");
+        process::exit(2);
+    });
     let chain = args.chain.details();
     let config = chain
         .as_ref()
@@ -234,20 +266,23 @@ fn main() {
             })
         })
         .expect("unsupported chain");
+    config.validate().unwrap_or_else(|err| {
+        eprintln!("error: invalid Safe configuration: {err}");
+        process::exit(2);
+    });
     let explorer = chain.as_ref().map(Details::explorer);
 
-    match (args.prefix.clone(), args.leading) {
-        // Prefix search: find one matching address, then print it.
-        (Some(prefix), None) => {
-            let prefix = prefix.0;
+    match (pattern, args.leading) {
+        // Pattern search: find one matching address, then print it.
+        (Some(pattern), None) => {
             #[cfg(feature = "gpu")]
             let safe = if args.gpu {
-                run_gpu_search(Safe::new(config.clone()), &prefix)
+                run_gpu_search(Safe::new(config.clone()), &pattern)
             } else {
-                run_cpu_search(threads, || (Safe::new(config.clone()), prefix.clone()))
+                run_cpu_search(threads, || (Safe::new(config.clone()), pattern))
             };
             #[cfg(not(feature = "gpu"))]
-            let safe = run_cpu_search(threads, || (Safe::new(config.clone()), prefix.clone()));
+            let safe = run_cpu_search(threads, || (Safe::new(config.clone()), pattern));
 
             print_result(args.quiet, args.params, &config, explorer, &safe);
         }
@@ -270,15 +305,24 @@ fn main() {
             #[cfg(not(feature = "gpu"))]
             run_cpu_leading(threads, &config, nibble, report);
         }
-        (None, None) => {
-            eprintln!("error: one of '--prefix' or '--leading' must be specified");
-            process::exit(2);
-        }
-        // Prevented by clap's `conflicts_with`.
+        // Pattern construction and clap conflicts make these unreachable.
+        (None, None) => unreachable!(),
         (Some(_), Some(_)) => unreachable!(),
     }
 
     process::exit(0);
+}
+
+fn compile_pattern(args: &Args) -> Result<Option<AddressPattern>, PatternError> {
+    if args.leading.is_some() {
+        Ok(None)
+    } else {
+        AddressPattern::from_affixes(
+            args.prefix.as_ref().map(Affix::as_str),
+            args.suffix.as_ref().map(Affix::as_str),
+        )
+        .map(Some)
+    }
 }
 
 /// Prints the full deployment details for a found Safe, honouring the
@@ -338,16 +382,19 @@ fn print_result(
 
 /// Runs the search across CPU threads (or on the current thread when
 /// `threads` is `None`), returning the Safe with its winning salt nonce set.
-fn run_cpu_search(threads: Option<NonZeroUsize>, setup: impl Fn() -> (Safe, Vec<u8>)) -> Safe {
+fn run_cpu_search(
+    threads: Option<NonZeroUsize>,
+    setup: impl Fn() -> (Safe, AddressPattern),
+) -> Safe {
     if let Some(threads) = threads {
         let (sender, receiver) = mpsc::channel();
         let _threads = (0..threads.get())
             .map(|_| {
                 thread::spawn({
-                    let (mut safe, prefix) = setup();
+                    let (mut safe, pattern) = setup();
                     let result = sender.clone();
                     move || {
-                        deadbeef_core::search(&mut safe, &prefix);
+                        deadbeef_core::search_pattern(&mut safe, &pattern);
                         let _ = result.send(safe);
                     }
                 })
@@ -355,8 +402,8 @@ fn run_cpu_search(threads: Option<NonZeroUsize>, setup: impl Fn() -> (Safe, Vec<
             .collect::<Vec<_>>();
         receiver.recv().expect("missing result")
     } else {
-        let (mut safe, prefix) = setup();
-        deadbeef_core::search(&mut safe, &prefix);
+        let (mut safe, pattern) = setup();
+        deadbeef_core::search_pattern(&mut safe, &pattern);
         safe
     }
 }
@@ -384,16 +431,21 @@ fn run_cpu_leading(
     }
     drop(sender);
 
-    // Blocks forever receiving each new record (worker threads never finish).
+    // Cross-thread channel delivery can lag behind the atomic best update, so
+    // discard stale messages to keep printed records strictly increasing.
+    let mut last_reported = 0;
     for (count, safe) in receiver {
-        report(count, &safe);
+        if count > last_reported {
+            last_reported = count;
+            report(count, &safe);
+        }
     }
 }
 
 /// Runs the search on the GPU, rendering a live progress line to stderr, and
 /// returns the Safe with its winning salt nonce set.
 #[cfg(feature = "gpu")]
-fn run_gpu_search(mut safe: Safe, prefix: &[u8]) -> Safe {
+fn run_gpu_search(mut safe: Safe, pattern: &AddressPattern) -> Safe {
     use std::io::{IsTerminal, Write};
 
     let gpu = deadbeef_gpu::Gpu::new().unwrap_or_else(|err| {
@@ -404,8 +456,8 @@ fn run_gpu_search(mut safe: Safe, prefix: &[u8]) -> Safe {
     let mut stderr = std::io::stderr();
     let tty = stderr.is_terminal();
 
-    // Expected number of attempts to match the prefix (256 possibilities/byte).
-    let expected = 256_f64.powi(prefix.len() as i32);
+    // Each independently constrained hex digit has 16 possibilities.
+    let expected = 16_f64.powi(pattern.constrained_nibbles() as i32);
 
     eprintln!(
         "searching on GPU: {} ({} nonces/dispatch, ~{} expected)",
@@ -414,7 +466,7 @@ fn run_gpu_search(mut safe: Safe, prefix: &[u8]) -> Safe {
         human(expected),
     );
 
-    gpu.search(&mut safe, prefix, |progress| {
+    gpu.search_pattern(&mut safe, pattern, |progress| {
         if !tty {
             return;
         }
@@ -521,5 +573,45 @@ fn fmt_duration(secs: f64) -> String {
         format!("{}h{:02}m", secs / 3600, (secs % 3600) / 60)
     } else {
         format!("{}d{:02}h", secs / 86400, (secs % 86400) / 3600)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const OWNER: &str = "0x1111111111111111111111111111111111111111";
+
+    #[test]
+    fn accepts_combined_nibble_affixes() {
+        let args = Args::try_parse_from([
+            "deadbeef", "--owner", OWNER, "--prefix", "0xabc", "--suffix", "def",
+        ])
+        .unwrap();
+        let pattern = compile_pattern(&args).unwrap().unwrap();
+
+        assert_eq!(pattern.constrained_nibbles(), 6);
+        assert!(pattern.matches(
+            "0xabc0000000000000000000000000000000000def"
+                .parse()
+                .unwrap()
+        ));
+    }
+
+    #[test]
+    fn requires_a_search_mode_and_rejects_conflicts() {
+        let args = Args::try_parse_from(["deadbeef", "--owner", OWNER]).unwrap();
+        assert_eq!(compile_pattern(&args), Err(PatternError::Empty));
+
+        assert!(Args::try_parse_from([
+            "deadbeef",
+            "--owner",
+            OWNER,
+            "--suffix",
+            "f",
+            "--leading",
+            "0",
+        ])
+        .is_err());
     }
 }

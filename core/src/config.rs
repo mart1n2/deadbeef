@@ -3,6 +3,10 @@ use crate::{
     keccak,
 };
 use hex_literal::hex;
+use std::{
+    error::Error,
+    fmt::{self, Display, Formatter},
+};
 
 /// The Safe smart account creation configuration.
 #[derive(Clone)]
@@ -12,6 +16,55 @@ pub struct Configuration {
     /// The account configuration.
     pub account: Account,
 }
+
+impl Configuration {
+    /// Validates account settings that would otherwise make Safe setup revert.
+    pub fn validate(&self) -> Result<(), ConfigurationError> {
+        if self.account.owners.is_empty() {
+            return Err(ConfigurationError::NoOwners);
+        }
+        if self.account.threshold == 0 || self.account.threshold > self.account.owners.len() {
+            return Err(ConfigurationError::InvalidThreshold {
+                threshold: self.account.threshold,
+                owners: self.account.owners.len(),
+            });
+        }
+        for index in 0..self.account.owners.len() {
+            if self.account.owners[..index].contains(&self.account.owners[index]) {
+                return Err(ConfigurationError::DuplicateOwner {
+                    owner: self.account.owners[index],
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+/// An invalid Safe creation configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConfigurationError {
+    /// A Safe requires at least one owner.
+    NoOwners,
+    /// The threshold must be between one and the owner count.
+    InvalidThreshold { threshold: usize, owners: usize },
+    /// Safe setup rejects duplicate owner addresses.
+    DuplicateOwner { owner: NonZeroAddress },
+}
+
+impl Display for ConfigurationError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::NoOwners => f.write_str("at least one owner is required"),
+            Self::InvalidThreshold { threshold, owners } => write!(
+                f,
+                "threshold must be between 1 and the owner count ({owners}), got {threshold}"
+            ),
+            Self::DuplicateOwner { owner } => write!(f, "duplicate owner: {owner}"),
+        }
+    }
+}
+
+impl Error for ConfigurationError {}
 
 /// The Safe proxy configuration.
 #[derive(Clone)]
@@ -212,6 +265,43 @@ mod tests {
                  fe51f64300000000000000000000000022222222222222222222222222222222
                  2222222200000000000000000000000000000000000000000000000000000000"
             ),
+        );
+    }
+
+    #[test]
+    fn validates_account_settings() {
+        let owner = address!(nz "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let mut config = Configuration {
+            proxy: Proxy {
+                factory: address!(nz "1111111111111111111111111111111111111111"),
+                init_code: vec![],
+                singleton: address!(nz "2222222222222222222222222222222222222222"),
+            },
+            account: Account {
+                owners: vec![owner],
+                threshold: 1,
+                setup: None,
+                fallback_handler: None,
+                identifier: None,
+            },
+        };
+        assert_eq!(config.validate(), Ok(()));
+
+        config.account.owners.clear();
+        assert_eq!(config.validate(), Err(ConfigurationError::NoOwners));
+
+        config.account.owners.push(owner);
+        config.account.threshold = 0;
+        assert!(matches!(
+            config.validate(),
+            Err(ConfigurationError::InvalidThreshold { .. })
+        ));
+
+        config.account.threshold = 1;
+        config.account.owners.push(owner);
+        assert_eq!(
+            config.validate(),
+            Err(ConfigurationError::DuplicateOwner { owner })
         );
     }
 }
