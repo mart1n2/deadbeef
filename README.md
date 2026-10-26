@@ -2,7 +2,7 @@
 
 Tool used for computing vanity Safe addresses.
 
-This tool only officially supports the latest Safe deployment [`v1.4.1`](https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.4.1).
+This tool officially supports the Safe deployments [`v1.4.1`](https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.4.1) (the default) and [`v1.5.0`](https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.5.0).
 
 Since this version of the Safe proxy factory uses the `CREATE2` op-code, we can change the final address by fiddling with the user-specified `saltNonce` parameter.
 It works by trying out different values for the `saltNonce` parameter until it finds one that creates an address matching what you want.
@@ -113,6 +113,14 @@ For using Safe deployments on different chains can also be used:
 ```sh
 deadbeef ... --chain 100 ...
 ```
+
+The Safe contract version defaults to `v1.4.1`, but `v1.5.0` can be selected instead:
+
+```sh
+deadbeef ... --safe-version 1.5.0 ...
+```
+
+The contract addresses differ between versions, so the same owners and salt nonce result in a different Safe address for each version. `v1.5.0` is not deployed on every supported chain (e.g. Polygon zkEVM and Blast), in which case the tool exits with an error.
 
 As well as custom fallback handlers:
 

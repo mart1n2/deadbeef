@@ -1,7 +1,7 @@
 mod chain;
 mod deployment;
 
-use self::chain::{Chain, Details, Explorer, Singleton};
+use self::chain::{Chain, Details, Explorer, SafeVersion, Singleton};
 use clap::Parser;
 use deadbeef_core::{
     config, Address, AddressPattern, Configuration, NonZeroAddress, PatternError, Safe,
@@ -58,6 +58,11 @@ struct Args {
     /// '--singleton' must be specified.
     #[arg(short, long, default_value_t = Chain::ethereum())]
     chain: Chain,
+
+    /// The Safe contract version to deploy. Defaults to the chain's default
+    /// deployment (v1.4.1 on most chains).
+    #[arg(long, value_enum)]
+    safe_version: Option<SafeVersion>,
 
     /// Override for the `SafeProxyFactory` address.
     #[arg(long)]
@@ -195,7 +200,13 @@ fn main() {
         eprintln!("error: {err}");
         process::exit(2);
     });
-    let chain = args.chain.details();
+    let chain = args
+        .chain
+        .details_for(args.safe_version)
+        .unwrap_or_else(|err| {
+            eprintln!("error: {err}");
+            process::exit(2);
+        });
     let config = chain
         .as_ref()
         .map(|details| {

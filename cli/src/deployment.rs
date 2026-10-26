@@ -105,6 +105,81 @@ pub mod v1_4_1 {
     }
 }
 
+/// The Safe v1.5.0 contract deployments.
+///
+/// Addresses can be found in the Safe deployments repository:
+/// <https://github.com/safe-global/safe-deployments/tree/main/src/assets/v1.5.0>
+/// The `proxyCreationCode` can be read from the from the proxy factory:
+/// <https://etherscan.io/address/0x14F2982D601c9458F93bd70B218933A6f8165e7b#readContract>
+pub mod v1_5_0 {
+    use super::*;
+
+    /// The canonical contract deployment.
+    pub static CANONICAL: Deployment = Deployment {
+        safe_proxy_factory: address!(nz "14F2982D601c9458F93bd70B218933A6f8165e7b"),
+        safe_proxy_init_code: &hex!(
+            "608060405234801561001057600080fd5b506040516101b63803806101b68339
+             818101604052602081101561003357600080fd5b810190808051906020019092
+             9190505050600073ffffffffffffffffffffffffffffffffffffffff168173ff
+             ffffffffffffffffffffffffffffffffffffff1614156100ca576040517f08c3
+             79a0000000000000000000000000000000000000000000000000000000008152
+             6004018080602001828103825260228152602001806101946022913960400191
+             505060405180910390fd5b806000806101000a81548173ffffffffffffffffff
+             ffffffffffffffffffffff021916908373ffffffffffffffffffffffffffffff
+             ffffffffff16021790555050607b806101196000396000f3fe60806040526000
+             5463a619486e60003560e01c14156024578060601b606c5260206060f35b3660
+             008037600080366000845af43d6000803e806040573d6000fd5b3d6000f3fea2
+             646970667358221220e61834ebd2d8cd909d362bf67c47ef58fd665df38e6dd0
+             36ce65611101d072e964736f6c63430007060033496e76616c69642073696e67
+             6c65746f6e20616464726573732070726f7669646564"
+        ),
+        safe: address!(nz "Ff51A5898e281Db6DfC7855790607438dF2ca44b"),
+        safe_l2: address!(nz "Edd160fEBBD92E350D4D398fb636302fccd67C7e"),
+        safe_to_l2_setup: address!("900C7589200010D6C6eCaaE5B06EBe653bc2D82a"),
+        compatibility_fallback_handler: address!("3EfCBb83A4A7AfcB4F68D501E2c2203a38be77f4"),
+    };
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use deadbeef_core::{config, Configuration, Safe};
+
+        #[test]
+        fn compute_address() {
+            // Expected address is the return value of an `eth_call` simulating
+            // the generated `createProxyWithNonce` calldata against the
+            // canonical v1.5.0 proxy factory on Ethereum Mainnet and Arbitrum.
+            let mut safe = Safe::new(Configuration {
+                proxy: config::Proxy {
+                    factory: CANONICAL.safe_proxy_factory,
+                    init_code: CANONICAL.safe_proxy_init_code.to_vec(),
+                    singleton: CANONICAL.safe,
+                },
+                account: config::Account {
+                    owners: vec![
+                        address!(nz "BF51A8D5ec360F69f9d852Bad1df81585a0b4de2"),
+                        address!(nz "84B2D6d9C43Ee780Dd3AA5a7f68aE2A5f45F8206"),
+                    ],
+                    threshold: 2,
+                    setup: Some(config::SafeToL2Setup {
+                        address: CANONICAL.safe_to_l2_setup.non_zero().unwrap(),
+                        l2_singleton: CANONICAL.safe_l2,
+                    }),
+                    fallback_handler: CANONICAL.compatibility_fallback_handler.non_zero(),
+                    identifier: None,
+                },
+            });
+            safe.update_salt_nonce(|n| *n = [0; 32]);
+
+            let address = safe.creation_address();
+            assert_eq!(
+                address,
+                address!("6015025Bb825e10E0FDb92C2dd73E531940A4F6B")
+            );
+        }
+    }
+}
+
 /// The Safe v1.3.0 contract deployments.
 ///
 /// Addresses can be found in the Safe deployments repository:

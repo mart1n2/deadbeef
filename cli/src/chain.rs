@@ -18,6 +18,43 @@ impl Chain {
         Self(1)
     }
 
+    /// Returns the [`Details`] for this chain using the requested Safe
+    /// version, or the chain's default deployment when no version is given.
+    ///
+    /// Returns [`None`] if the chain is not officially supported, and an error
+    /// if the requested version is not deployed on the chain.
+    pub fn details_for(&self, version: Option<SafeVersion>) -> Result<Option<Details>, String> {
+        let Some(details) = self.details() else {
+            return match version {
+                Some(version) => Err(format!(
+                    "'--safe-version {version}' requires a supported chain, but chain {self} \
+                     is not supported; specify the contract addresses manually instead"
+                )),
+                None => Ok(None),
+            };
+        };
+        let Some(version) = version else {
+            return Ok(Some(details));
+        };
+        if !self.has(version) {
+            return Err(format!("Safe v{version} is not deployed on chain {self}"));
+        }
+        Ok(Some(Details {
+            deployment: version.deployment(),
+            ..details
+        }))
+    }
+
+    /// Returns whether the canonical deployment of the given Safe version is
+    /// available on this chain, according to the Safe deployments repository:
+    /// <https://github.com/safe-global/safe-deployments/tree/main/src/assets>
+    fn has(&self, version: SafeVersion) -> bool {
+        match version {
+            SafeVersion::V1_4_1 => !matches!(self.0, 324 | 10200),
+            SafeVersion::V1_5_0 => !matches!(self.0, 324 | 1101 | 10200 | 81457),
+        }
+    }
+
     /// Returns the [`Details`] for this chain, or [`None`] if the chain is
     /// not officially supported.
     pub fn details(&self) -> Option<Details> {
@@ -262,6 +299,36 @@ impl Explorer {
     }
 }
 
+/// A supported Safe contract version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum SafeVersion {
+    /// Safe v1.4.1.
+    #[value(name = "1.4.1")]
+    V1_4_1,
+    /// Safe v1.5.0.
+    #[value(name = "1.5.0")]
+    V1_5_0,
+}
+
+impl SafeVersion {
+    /// Returns the canonical contract deployment for this version.
+    pub fn deployment(self) -> &'static Deployment {
+        match self {
+            Self::V1_4_1 => &deployment::v1_4_1::CANONICAL,
+            Self::V1_5_0 => &deployment::v1_5_0::CANONICAL,
+        }
+    }
+}
+
+impl Display for SafeVersion {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            Self::V1_4_1 => f.write_str("1.4.1"),
+            Self::V1_5_0 => f.write_str("1.5.0"),
+        }
+    }
+}
+
 /// The supported singleton contract.
 #[derive(Clone, Copy, Debug)]
 pub enum Singleton {
@@ -287,5 +354,40 @@ mod tests {
                 .create_proxy_with_nonce_url(details.deployment.safe_proxy_factory.get());
             println!("{}: {}", chain, url);
         }
+    }
+
+    #[test]
+    fn safe_version_selection() {
+        let arbitrum = Chain(42161);
+        let factory = |version| {
+            arbitrum
+                .details_for(version)
+                .unwrap()
+                .unwrap()
+                .deployment
+                .safe_proxy_factory
+        };
+        assert_eq!(
+            factory(None),
+            deployment::v1_4_1::CANONICAL.safe_proxy_factory
+        );
+        assert_eq!(
+            factory(Some(SafeVersion::V1_5_0)),
+            deployment::v1_5_0::CANONICAL.safe_proxy_factory
+        );
+
+        // Chiado only has v1.3.0, which stays its default.
+        let chiado = Chain(10200);
+        assert_eq!(
+            chiado.details_for(None).unwrap().unwrap().deployment.safe,
+            deployment::v1_3_0::CANONICAL.safe
+        );
+        assert!(chiado.details_for(Some(SafeVersion::V1_4_1)).is_err());
+
+        // Chains without the requested deployment and unknown chains are
+        // rejected.
+        assert!(Chain(81457).details_for(Some(SafeVersion::V1_5_0)).is_err());
+        assert!(Chain(1337).details_for(Some(SafeVersion::V1_5_0)).is_err());
+        assert!(Chain(1337).details_for(None).unwrap().is_none());
     }
 }
